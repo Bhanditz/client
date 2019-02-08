@@ -57,9 +57,33 @@ namespace OCC {
 
 Q_LOGGING_CATEGORY(lcEngine, "sync.engine", QtInfoMsg)
 
-static const int s_touchedFilesMaxAgeMs = 15 * 1000;
 bool SyncEngine::s_anySyncRunning = false;
 
+/** When the client touches a file, block change notifications for this duration (ms)
+ *
+ * On Linux and Windows the file watcher can't distinguish a change that originates
+ * from the client (like a download during a sync operation) and an external change.
+ * To work around that, all files the client touches are recorded and file change
+ * notifications for these are blocked for some time. This value controls for how
+ * long.
+ *
+ * Reasons this delay can't be very small:
+ * - it takes time for the change notification to arrive and to be processed by the client
+ * - some time could pass between the client recording that a file will be touched
+ *   and its filesystem operation finishing, triggering the notification
+ */
+static const int s_touchedFilesMaxAgeMs = 3 * 1000;
+
+/** Duration in ms that uploads should be delayed after a file change
+ *
+ * In certain situations a file can be written to very regularly over a large
+ * amount of time. Copying a large file could take a while. A logfile could be
+ * updated every second.
+ *
+ * In these cases it isn't desirable to attempt to upload the "unfinished" file.
+ * To avoid that, uploads of files where the distance between the mtime and the
+ * current time is less than this duration are skipped.
+ */
 qint64 SyncEngine::minimumFileAgeForUpload = 2000;
 
 SyncEngine::SyncEngine(AccountPtr account, const QString &localPath,
@@ -849,7 +873,7 @@ void SyncEngine::slotAddTouchedFile(const QString &fn)
         // Compare to our new QElapsedTimer instead of using elapsed().
         // This avoids querying the current time from the OS for every loop.
         if (now.msecsSinceReference() - first.key().msecsSinceReference() <= s_touchedFilesMaxAgeMs) {
-            // We found the first path younger than 15 second, keep the rest.
+            // We found the first path younger than the maximum age, keep the rest.
             break;
         }
 
